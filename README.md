@@ -1,5 +1,7 @@
 # DesertLandCNN
 
+The dataset is "digits.cs" from scikit-learn.
+
 Building Layers
 ```
 
