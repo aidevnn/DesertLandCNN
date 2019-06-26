@@ -6,10 +6,12 @@ namespace DesertLandCNN
 {
     public class Conv2d<Type> : Layer<Type>
     {
-        private NDArray<Type> W, w0, layerInput;
+        private NDArray<Type> W, w0, layerInput, X_col, W_col;
         private IOptimizer<Type> WOpt, w0Opt;
 
         public override int Parameters => NumDN.ShapeLength(W.Shape) + NumDN.ShapeLength(w0.Shape);
+
+        public override int[] GetOutputShape() => outputShape();
 
         private int numFilters, stride, fWidth, fHeight, channel;
         private int[] filterShape;
@@ -17,6 +19,7 @@ namespace DesertLandCNN
 
         public Conv2d(int numFilters, int[] filterShape, int[] inputShape, int stride, string padding)
         {
+            this.Name = "Conv2d";
             this.numFilters = numFilters;
             this.stride = stride;
             Inputs = inputShape.ToArray();
@@ -26,6 +29,7 @@ namespace DesertLandCNN
 
         public Conv2d(int numFilters, int[] filterShape, int stride, string padding)
         {
+            this.Name = "Conv2d";
             this.numFilters = numFilters;
             this.stride = stride;
             this.filterShape = filterShape.ToArray();
@@ -43,6 +47,37 @@ namespace DesertLandCNN
 
             WOpt = optimizer.Clone();
             w0Opt = optimizer.Clone();
+        }
+
+        /*
+                batch_size, channels, height, width = X.shape
+                self.layer_input = X
+                # Turn image shape into column shape
+                # (enables dot product between input and weights)
+                self.X_col = image_to_column(X, self.filter_shape, stride=self.stride, output_shape=self.padding)
+                # Turn weights into column shape
+                self.W_col = self.W.reshape((self.n_filters, -1))
+                # Calculate output
+                output = self.W_col.dot(self.X_col) + self.w0
+                # Reshape into (n_filters, out_height, out_width, batch_size)
+                output = output.reshape(self.output_shape() + (batch_size, ))
+                # Redistribute axises so that batch size comes first
+                return output.transpose(3,0,1,2)
+         */
+        public override NDArray<Type> Forward(NDArray<Type> X, bool isTraining)
+        {
+            int batchSize = X.Shape[0];
+            int chan = X.Shape[1];
+            int height = X.Shape[2];
+            int width = X.Shape[3];
+
+            layerInput = new NDArray<Type>(X);
+            X_col = img2col(X, filterShape, stride, padding);
+            W_col = W.ReShape(numFilters, -1);
+            var output = NDArray<Type>.Dot(W_col, X_col) + w0;
+            output.ReShapeInplace(outputShape(batchSize));
+
+            return output.transpose(3, 0, 1, 2);
         }
 
         /*
@@ -74,35 +109,19 @@ namespace DesertLandCNN
          */
         public override NDArray<Type> Backward(NDArray<Type> accumGrad)
         {
-            throw new NotImplementedException();
-        }
+            var accumGrad0 = accumGrad.transpose(1, 2, 3, 0).ReShape(numFilters, -1);
+            if (trainable)
+            {
+                var gradW = NDArray<Type>.Dot(accumGrad0, X_col.T).ReShape(W.Shape);
+                var gradw0 = NumDN.Sum(accumGrad0, true, 1);
+                W = WOpt.Update(W, gradW);
+                w0 = w0Opt.Update(w0, gradw0);
+            }
 
-        /*
-                batch_size, channels, height, width = X.shape
-                self.layer_input = X
-                # Turn image shape into column shape
-                # (enables dot product between input and weights)
-                self.X_col = image_to_column(X, self.filter_shape, stride=self.stride, output_shape=self.padding)
-                # Turn weights into column shape
-                self.W_col = self.W.reshape((self.n_filters, -1))
-                # Calculate output
-                output = self.W_col.dot(self.X_col) + self.w0
-                # Reshape into (n_filters, out_height, out_width, batch_size)
-                output = output.reshape(self.output_shape() + (batch_size, ))
-                # Redistribute axises so that batch size comes first
-                return output.transpose(3,0,1,2)
-         */
-        public override NDArray<Type> Forward(NDArray<Type> X, bool isTraining)
-        {
+            accumGrad0 = NDArray<Type>.Dot(W_col.T, accumGrad0);
+            accumGrad0 = col2img(accumGrad0, layerInput.Shape, filterShape, stride, padding);
 
-            int batchSize = X.Shape[0];
-            int chan = X.Shape[1];
-            int height = X.Shape[2];
-            int width = X.Shape[3];
-
-            layerInput = new NDArray<Type>(X);
-
-            return null;
+            return accumGrad0;
         }
 
         public override void SetInputShape(int[] inputShape)
@@ -111,7 +130,34 @@ namespace DesertLandCNN
         }
 
         /*
+        def output_shape(self):
+            channels, height, width = self.input_shape
+            pad_h, pad_w = determine_padding(self.filter_shape, output_shape=self.padding)
+            output_height = (height + np.sum(pad_h) - self.filter_shape[0]) / self.stride + 1
+            output_width = (width + np.sum(pad_w) - self.filter_shape[1]) / self.stride + 1
+            return self.n_filters, int(output_height), int(output_width)
+         */
+        int[] outputShape()
+        {
+            (int chan, int h, int w) = (Inputs[0], Inputs[1], Inputs[2]);
+            (var ph, var pw) = determinePadding(filterShape, padding);
+            int oh = (int)((double)(h + ph.Item1 + ph.Item2 - filterShape[0]) / stride + 1);
+            int ow = (int)((double)(w + pw.Item1 + pw.Item2 - filterShape[1]) / stride + 1);
 
+            return new int[] { numFilters, oh, ow };
+        }
+
+        int[] outputShape(int batchSize)
+        {
+            (int chan, int h, int w) = (Inputs[0], Inputs[1], Inputs[2]);
+            (var ph, var pw) = determinePadding(filterShape, padding);
+            int oh = (int)((double)(h + ph.Item1 + ph.Item2 - filterShape[0]) / stride + 1);
+            int ow = (int)((double)(w + pw.Item1 + pw.Item2 - filterShape[1]) / stride + 1);
+
+            return new int[] { numFilters, oh, ow, batchSize };
+        }
+
+        /*
             # Method which calculates the padding based on the specified output shape and the
             # shape of the filters
             def determine_padding(filter_shape, output_shape="same"):
@@ -133,24 +179,20 @@ namespace DesertLandCNN
                     pad_w2 = int(math.ceil((filter_width - 1)/2))
 
                     return (pad_h1, pad_h2), (pad_w1, pad_w2)
-
-                
          */
         public static ((int,int),(int,int)) determinePadding(int[] fShape, string outShape = "same")
         {
             if (outShape == "valid")
                 return ((0, 0), (0, 0));
-            else
-            {
-                int h = fShape[0];
-                int w = fShape[1];
-                int ph1 = (int)Math.Floor((h - 1.0) / 2.0);
-                int ph2 = (int)Math.Ceiling((h - 1.0) / 2.0);
-                int pw1 = (int)Math.Floor((w - 1.0) / 2.0);
-                int pw2 = (int)Math.Ceiling((w - 1.0) / 2.0);
 
-                return ((ph1, ph2), (pw1, pw2));
-            }
+            int h = fShape[0];
+            int w = fShape[1];
+            int ph1 = (int)Math.Floor((h - 1.0) / 2.0);
+            int ph2 = (int)Math.Ceiling((h - 1.0) / 2.0);
+            int pw1 = (int)Math.Floor((w - 1.0) / 2.0);
+            int pw2 = (int)Math.Ceiling((w - 1.0) / 2.0);
+
+            return ((ph1, ph2), (pw1, pw2));
         }
 
         /*
@@ -201,12 +243,10 @@ namespace DesertLandCNN
             var k0 = NumDN.Repeat(NumDN.ARange(chan), fh * fw);
             var k = new NDArray<int>(k0, new int[] { k0.Length, 1 });
 
-
             return (k, i, j);
         }
 
         /*
-
         # Method which turns the image shaped input to column shape.
         # Used during the forward pass.
         # Reference: CS231n Stanford
@@ -230,15 +270,18 @@ namespace DesertLandCNN
             return cols
          
          */
-        static NDArray<Type> img2col(NDArray<Type> images, int[] fShape, int stride, string outShape = "same")
+        public static NDArray<Type> img2col(NDArray<Type> images, int[] fShape, int stride, string outShape = "same")
         {
+            (var fh, var fw) = (fShape[0], fShape[1]);
             (var ph, var pw) = determinePadding(fShape, outShape);
             var imgsPadded = NumDN.Pad(images, (0, 0), (0, 0), ph, pw);
             (var k, var i, var j) = img2colIndices(images.Shape, fShape, stride, (ph, pw));
 
+            var cols = imgsPadded.GetIndexes(":", k, i, j);
             int chan = images.Shape[1];
+            cols = cols.transpose(1, 2, 0).ReShape(fh * fw * chan, -1);
 
-            return null;
+            return cols;
         }
 
         /*
@@ -263,12 +306,22 @@ namespace DesertLandCNN
 
                 # Return image without padding
                 return images_padded[:, :, pad_h[0]:height+pad_h[0], pad_w[0]:width+pad_w[0]]
-                                 
          */
-        static NDArray<Type> col2img()
+        public static NDArray<Type> col2img(NDArray<Type> cols, int[] imagesShape, int[] fShape, int stride, string outShape = "same")
         {
+            (int batchSize, int chan, int h, int w) = (imagesShape[0], imagesShape[1], imagesShape[2], imagesShape[3]);
+            (var ph, var pw) = determinePadding(fShape, outShape);
+            int hp = h + ph.Item1 + ph.Item2;
+            int wp = w + pw.Item1 + pw.Item2;
+            var imgsPadded = new NDArray<Type>(batchSize, chan, hp, wp);
+            //var imgsPadded = NumDN.Uniform<Type>(1e-5, 1 - 1e-5, batchSize, chan, hp, wp);
 
-            return null;
+            (var k, var i, var j) = img2colIndices(imagesShape, fShape, stride, (ph, pw));
+            var cols0 = cols.ReShape(chan * NumDN.ShapeLength(fShape), -1, batchSize);
+            cols0 = cols0.transpose(2, 0, 1);
+            var imgsPadded2 = ExtensionIndexes.AddAt(imgsPadded, cols0).Indexes(":", k, i, j);
+
+            return imgsPadded2.GetIndexes(":", ":", $"{ph.Item1}:{h + ph.Item1}", $"{pw.Item1}:{w + pw.Item1}");
         }
     }
 }

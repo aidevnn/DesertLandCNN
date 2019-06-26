@@ -1,5 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
 
 namespace DesertLandCNN
@@ -8,7 +10,87 @@ namespace DesertLandCNN
     {
         public static void Main(string[] args)
         {
-            Console.WriteLine("Hello World!");
+            NumDN.DebugNumPy = false;
+
+            Console.WriteLine("Hello World! CNN");
+
+            var raw = File.ReadAllLines("digits.csv").OrderBy(a => NumDN.GetRandom.NextDouble()).ToArray();
+            Console.WriteLine($"raw data:{raw.Length}");
+            (var dataX, var dataY) = importDataset(raw);
+
+            (var trainX, var trainY, var testX, var testY) = dataSplitTraitest(dataX, dataY, 0.9);
+            Console.WriteLine($"trainX Shape:{trainX.Shape.Glue()}");
+            Console.WriteLine($"testX  Shape:{testX.Shape.Glue()}");
+            Console.WriteLine($"trainY Shape:{trainY.Shape.Glue()}");
+            Console.WriteLine($"testY  Shape:{testY.Shape.Glue()}");
+            Console.WriteLine();
+
+            var optimizer = new Adam<float>();
+            var net = new Network<float>(optimizer, new CrossEntropy<float>(), (testX, testY));
+
+            net.AddLayer(new Conv2d<float>(4, new int[] { 3, 3 }, new int[] { 1, 8, 8 }, 1, "same"));
+            net.AddLayer(new ReLULayer<float>());
+            //net.AddLayer(new TanhLayer<float>());
+            net.AddLayer(new Dropout<float>(0.4));
+            net.AddLayer(new BatchNormalization<float>());
+
+            net.AddLayer(new Conv2d<float>(8, new int[] { 3, 3 }, 1, "same"));
+            net.AddLayer(new ReLULayer<float>());
+            //net.AddLayer(new TanhLayer<float>());
+            net.AddLayer(new Dropout<float>(0.4));
+            net.AddLayer(new BatchNormalization<float>());
+            net.AddLayer(new FlattenLayer<float>());
+
+            net.AddLayer(new DenseLayer<float>(64));
+            net.AddLayer(new ReLULayer<float>());
+            //net.AddLayer(new TanhLayer<float>());
+            net.AddLayer(new Dropout<float>(0.25));
+            net.AddLayer(new BatchNormalization<float>());
+
+            net.AddLayer(new DenseLayer<float>(10));
+            //net.AddLayer(new TanhLayer<float>());
+            net.AddLayer(new SoftmaxLayer<float>());
+
+            net.Summary();
+            net.Fit(trainX, trainY, 10, 16);
+        }
+
+        static float[] toCategorical(int[] x)
+        {
+            var data = x.SelectMany(i => Enumerable.Range(0, 10).Select((v, k) => k == i ? 1f : 0f)).ToArray();
+            return data;
+        }
+
+        static (float[], float[]) importDataset(string[] raw)
+        {
+            var data = raw.Select(l => l.Split(',').Select(float.Parse).ToArray()).ToArray();
+            var dataX = data.SelectMany(l => l.Take(64)).ToArray();
+            var dataY = toCategorical(data.Select(l => (int)l[64]).ToArray());
+
+            return (dataX, dataY);
+        }
+
+        static (NDArray<float>, NDArray<float>, NDArray<float>, NDArray<float>) dataSplitTraitest(float[] dataX,float[] dataY, double t = 0.5)
+        {
+            int lX = dataX.Length / 64;
+            int lY = dataY.Length / 10;
+            int splitX = (int)(lX * t);
+            int splitY = (int)(lY * t);
+            float[] dataTrainX = dataX.Take(splitX * 64).ToArray();
+            float[] dataTestX = dataX.Skip(splitX * 64).ToArray();
+            float[] dataTrainY = dataY.Take(splitY * 10).ToArray();
+            float[] dataTestY = dataY.Skip(splitY * 10).ToArray();
+
+            var trainX = new NDArray<float>(dataTrainX, new int[] { splitX, 1, 8, 8 });
+            var testX = new NDArray<float>(dataTestX, new int[] { lX - splitX, 1, 8, 8 });
+            var trainY = new NDArray<float>(dataTrainY, new int[] { splitY, 10});
+            var testY = new NDArray<float>(dataTestY, new int[] { lY - splitY, 10});
+
+            return (trainX, trainY, testX, testY);
+        }
+
+        static void Test()
+        {
             NumDN.DebugNumPy = true;
 
             //var a = NumDN.UniformInt(-10, 10, 2, 4, 3);
@@ -62,17 +144,17 @@ namespace DesertLandCNN
 
             //var a = NumDN.UniformInt(0, 10, 3, 5, 4);
             //Console.WriteLine(NumDN.BroadCasting(a).Glue(globalformat:"({0})"));
-            //a.GetAtIndexes(":");
-            //a.GetAtIndexes(":2", "1:");
-            //a.GetAtIndexes(":2", NumDN.NewAxis, "1:");
-            //a.GetAtIndexes(NumDN.NewAxis, ":2", "1:");
-            //a.GetAtIndexes(":2", "1:", NumDN.NewAxis);
-            //a.GetAtIndexes(NumDN.NewAxis, ":2", "1:", NumDN.NewAxis);
-            //a.GetAtIndexes(NumDN.NewAxis, ":2", "1:", NumDN.NewAxis, NumDN.NewAxis);
-            //a.GetAtIndexes(NumDN.NewAxis, NumDN.NewAxis, ":2", "1:", NumDN.NewAxis);
-            //a.GetAtIndexes(NumDN.NewAxis, ":2", NumDN.NewAxis, "1:", NumDN.NewAxis);
-            //a.GetAtIndexes(NumDN.NewAxis, ":2", NumDN.NewAxis, NumDN.NewAxis, "1:", NumDN.NewAxis);
-            //a.GetAtIndexes(NumDN.NewAxis, ":2", NumDN.NewAxis, NumDN.NewAxis);
+            //a.GetIndexes(":");
+            //a.GetIndexes(":2", "1:");
+            //a.GetIndexes(":2", NumDN.NewAxis, "1:");
+            //a.GetIndexes(NumDN.NewAxis, ":2", "1:");
+            //a.GetIndexes(":2", "1:", NumDN.NewAxis);
+            //a.GetIndexes(NumDN.NewAxis, ":2", "1:", NumDN.NewAxis);
+            //a.GetIndexes(NumDN.NewAxis, ":2", "1:", NumDN.NewAxis, NumDN.NewAxis);
+            //a.GetIndexes(NumDN.NewAxis, NumDN.NewAxis, ":2", "1:", NumDN.NewAxis);
+            //a.GetIndexes(NumDN.NewAxis, ":2", NumDN.NewAxis, "1:", NumDN.NewAxis);
+            //a.GetIndexes(NumDN.NewAxis, ":2", NumDN.NewAxis, NumDN.NewAxis, "1:", NumDN.NewAxis);
+            //a.GetIndexes(NumDN.NewAxis, ":2", NumDN.NewAxis, NumDN.NewAxis);
 
             //var b = NumDN.UniformInt(0, 3, 2, 4, 3);
             //var c = NumDN.UniformInt(0, 5, 5, 4);
@@ -84,32 +166,83 @@ namespace DesertLandCNN
             //Console.WriteLine(NDArray<int>.Dot(a, c.T));
             ////Console.WriteLine(d);
 
-            var x = NumDN.UniformInt(0, 10, 4, 5, 3, 6);
-            var y = NumDN.UniformInt(0, 4, 3, 2);
-            var z = NumDN.UniformInt(0, 5, 3, 2);
-            Console.WriteLine(x);
-            Console.WriteLine(y);
-            Console.WriteLine(z);
-            //x.GetAtIndexes(":", ":2", NumDN.NewAxis, ":", "3:");
-            //x.GetAtIndexes(":", z);
-            //x.GetAtIndexes(y, "1:3");
-            x.GetAtIndexes(y, z);
-            //x.GetAtIndexes(":", z, ":1", z);
-            //x.GetAtIndexes(":", z, z, ":1");
-            //x.GetAtIndexes(":", ":1", z, z);
-            //x.GetAtIndexes(y, NumDN.NewAxis, z);
-            //x.GetAtIndexes(NumDN.NewAxis, y, z);
+            //var x = NumDN.UniformInt(0, 10, 4, 5, 3, 6);
+            //var y = NumDN.UniformInt(0, 5, 3, 2);
+            //var z = NumDN.UniformInt(0, 3, 3, 3, 2);
+            //Console.WriteLine(x);
+            //Console.WriteLine(y);
+            //Console.WriteLine(z);
 
+            //x.GetIndexes(":", ":2", NumDN.NewAxis, ":", "3:");
+            //x.GetIndexes2(":", ":2", NumDN.NewAxis, ":", "3:");
+
+            //x.GetIndexes(":", y);
+
+            //x.GetIndexes(y, "1:3");
+            //x.GetIndexes(y, z);
+            //x.GetIndexes(":", z, ":1", z);
+            //x.GetIndexes(":", z, z, ":1");
+            //x.GetIndexes(":", ":1", z, z);
+            //x.GetIndexes(y, NumDN.NewAxis, z);
+            //x.GetIndexes(NumDN.NewAxis, y, z);
 
             //Console.WriteLine(a.T);
             //Console.WriteLine(NDArray<int>.Dot(a, b));
 
-            //a.GetAtIndexes(":", c);
-            //a.GetAtIndexes(b, "1:3");
-            //a.GetAtIndexes(b, c, "2:3");
-            //a.GetAtIndexes(c, ":", c);
-            //a.GetAtIndexes(":", c, c);
-            //a.GetAtIndexes(c, c, c);
+            //a.GetIndexes(":", c);
+            //a.GetIndexes(b, "1:3");
+            //a.GetIndexes(b, c, "2:3");
+            //a.GetIndexes(c, ":", c);
+            //a.GetIndexes(":", c, c);
+            //a.GetIndexes(c, c, c);
+
+            //var x = NumDN.UniformInt(0, 10, 3, 3);
+            //var y = NumDN.UniformInt(0, 3, 2, 2);
+            //var z = NumDN.UniformInt(0, 3, 2, 2);
+            //Console.WriteLine(x);
+            //Console.WriteLine(y);
+            //Console.WriteLine(z);
+
+            //var c = x.GetIndexes(":", z);
+            //Console.WriteLine(c);
+
+            //Console.WriteLine(ExtensionIndexes.AddAt(x, c).Indexes(":", y));
+
+            //var x = NumDN.UniformInt(0, 16, 2, 1, 8, 8).Cast<double>();
+            //Console.WriteLine(x);
+
+            //var cols = Conv2d<double>.img2col(x, new int[] { 3, 3 }, 1);
+            //Console.WriteLine(cols);
+
+            //var x0 = Conv2d<double>.col2img(cols, new int[] { 2, 1, 8, 8 }, new int[] { 3, 3 }, 1);
+            //Console.WriteLine(x0);
+
+            //Bench(1000, 10);
+            //Bench(1000, 10);
+            //Bench(1000, 10);
+            //Bench(1000, 10);
+            //Bench(1000, 10);
+
+            //var x = NumDN.UniformInt(0, 16, 3, 4, 5).Cast<double>();
+            //Console.WriteLine(x);
+            //Console.WriteLine(NumDN.Mean(x, 0));
+            //Console.WriteLine(NumDN.Var(x, 0));
+        }
+
+        static void Bench(int batchSize, int loops)
+        {
+            NumDN.DebugNumPy = false;
+
+            var sw = Stopwatch.StartNew();
+
+            for (int k = 0; k < loops; ++k)
+            {
+                var x = NumDN.UniformInt(0, 16, batchSize, 1, 8, 8).Cast<float>();
+                var cols = Conv2d<float>.img2col(x, new int[] { 3, 3 }, 1);
+                var x0 = Conv2d<float>.col2img(cols, x.Shape, new int[] { 3, 3 }, 1);
+            }
+
+            Console.WriteLine($"{0.001 * sw.ElapsedMilliseconds} s");
         }
     }
 }

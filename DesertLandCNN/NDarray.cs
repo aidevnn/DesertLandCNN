@@ -12,7 +12,7 @@ namespace DesertLandCNN
 
     public abstract class Ops<Type>
     {
-        public Type Zero;
+        public Type Zero, One;
         public abstract Type Neg(Type a);
         public abstract Type Add(Type a, Type b);
         public abstract Type Add<U>(Type a, U b);
@@ -35,11 +35,14 @@ namespace DesertLandCNN
         public abstract Type Tanh(Type x);
         public abstract Type Sigmoid(Type x);
         public abstract Type Clamp(Type x, double min, double max);
+
+        public abstract bool GtE(Type x, Type y);
+        public abstract bool Gt(Type x, Type y);
     }
 
     public class OpsInt : Ops<int>
     {
-        public OpsInt() { Zero = 0; }
+        public OpsInt() { Zero = 0; One = 1; }
         public override int Neg(int a) => -a;
         public override int Add(int a, int b) => a + b;
         public override int Add<U>(int a, U b) => a + Convert.ToInt32(b);
@@ -63,11 +66,13 @@ namespace DesertLandCNN
         public override int Sigmoid(int x) => throw new NotImplementedException();
         public override int Clamp(int x, double min, double max) => (int)Math.Min(max, Math.Max(min, x));
 
+        public override bool GtE(int x, int y) => x >= y;
+        public override bool Gt(int x, int y) => x > y;
     }
 
     public class OpsFloat : Ops<float>
     {
-        public OpsFloat() { Zero = 0f; }
+        public OpsFloat() { Zero = 0f; One = 1f; }
         public override float Neg(float a) => -a;
         public override float Add(float a, float b) => a + b;
         public override float Add<U>(float a, U b) => a + Convert.ToSingle(b);
@@ -90,11 +95,14 @@ namespace DesertLandCNN
         public override float Tanh(float x) => (float)Math.Tanh(x);
         public override float Sigmoid(float x) => (float)(1 / (1 + Math.Exp(-x)));
         public override float Clamp(float x, double min, double max) => (float)Math.Min(max, Math.Max(min, x));
+
+        public override bool GtE(float x, float y) => x >= y;
+        public override bool Gt(float x, float y) => x > y;
     }
 
     public class OpsDouble : Ops<double>
     {
-        public OpsDouble() { Zero = 0.0; }
+        public OpsDouble() { Zero = 0.0; One = 1.0; }
         public override double Neg(double a) => -a;
         public override double Add(double a, double b) => a + b;
         public override double Add<U>(double a, U b) => a + Convert.ToDouble(b);
@@ -117,6 +125,9 @@ namespace DesertLandCNN
         public override double Tanh(double x) => Math.Tanh(x);
         public override double Sigmoid(double x) => (1 / (1 + Math.Exp(-x)));
         public override double Clamp(double x, double min, double max) => Math.Min(max, Math.Max(min, x));
+
+        public override bool GtE(double x, double y) => x >= y;
+        public override bool Gt(double x, double y) => x > y;
     }
 
     public class NDArray<Type>
@@ -203,6 +214,13 @@ namespace DesertLandCNN
         }
 
         public NDArray<V> Apply<V>(Func<Type, V> func)
+        {
+            var nd = new NDArray<V>(Shape);
+            nd.items = items.Select(func).ToArray();
+            return nd;
+        }
+
+        public NDArray<V> Apply<V>(Func<Type, int, V> func)
         {
             var nd = new NDArray<V>(Shape);
             nd.items = items.Select(func).ToArray();
@@ -363,8 +381,36 @@ namespace DesertLandCNN
         #endregion
 
         #region ReShape
+        void ReshapeFit(int[] args)
+        {
+            int pos = -1, nb = 0;
+            for(int k = 0; k < args.Length; ++k)
+            {
+                if (args[k] == -1)
+                {
+                    ++nb;
+                    pos = k;
+                }
+            }
+
+            if (nb > 1)
+                throw new ArgumentException();
+
+            if (nb == 1)
+            {
+                args[pos] = 1;
+                int dim0 = NumDN.ShapeLength(Shape);
+                int dim1 = NumDN.ShapeLength(args);
+                if (dim0 % dim1 != 0)
+                    throw new ArgumentException();
+
+                args[pos] = dim0 / dim1;
+            }
+        }
+
         public NDArray<Type> ReShape(params int[] args)
         {
+            ReshapeFit(args);
             int oldDim = NumDN.ShapeLength(Shape);
             int newDim = NumDN.ShapeLength(args);
             if (oldDim != newDim)
@@ -378,6 +424,7 @@ namespace DesertLandCNN
 
         public void ReShapeInplace(params int[] args)
         {
+            ReshapeFit(args);
             int oldDim = NumDN.ShapeLength(Shape);
             int newDim = NumDN.ShapeLength(args);
             if (oldDim != newDim)
@@ -554,13 +601,13 @@ namespace DesertLandCNN
 
         #region Static Utilities
         private static Random random;
-        private static Random GetRandom
+        public static Random GetRandom
         {
             get
             {
                 if (random == null)
-                    //random = new Random((int)DateTime.Now.Ticks);
-                    random = new Random(123);
+                    random = new Random((int)DateTime.Now.Ticks);
+                    //random = new Random(123);
 
                 return random;
             }
@@ -656,7 +703,7 @@ namespace DesertLandCNN
 
         public static double Max<Type>(NDArray<Type> nD) => nD.items.Max(i => Convert.ToDouble(i));
         public static double SumDouble<Type>(NDArray<Type> nD) => nD.items.Sum(i => Convert.ToDouble(i));
-        public static double Mean<Type>(NDArray<Type> nD) => nD.items.Average(i => Convert.ToDouble(i));
+        public static double MeanDouble<Type>(NDArray<Type> nD) => nD.items.Average(i => Convert.ToDouble(i));
 
         public static NDArray<Type> Sum<Type>(NDArray<Type> nD, params int[] axis) => Sum(nD, true, axis);
 
@@ -688,6 +735,25 @@ namespace DesertLandCNN
             }
 
             return nD0;
+        }
+
+        public static NDArray<Type> Mean<Type>(NDArray<Type> nD, params int[] axis) => Mean(nD, true, axis);
+        public static NDArray<Type> Mean<Type>(NDArray<Type> nD, bool keepDims, params int[] axis)
+        {
+            double dim = ShapeLength(axis.Select(a => nD.Shape[a]).ToArray());
+            var nD0 = Sum(nD, keepDims, axis);
+
+            return nD0 / dim;
+        }
+
+        public static NDArray<Type> Var<Type>(NDArray<Type> nD, params int[] axis) => Var(nD, true, axis);
+        public static NDArray<Type> Var<Type>(NDArray<Type> nD, bool keepDims, params int[] axis)
+        {
+            double dim = ShapeLength(axis.Select(a => nD.Shape[a]).ToArray());
+            var nD0 = Mean(nD, keepDims, axis);
+            var nD1 = nD - nD0;
+
+            return Sum(nD1 * nD1, keepDims, axis) / dim;
         }
 
         public static NDArray<Type> Pad<Type>(NDArray<Type> nD, params (int, int)[] padding)
