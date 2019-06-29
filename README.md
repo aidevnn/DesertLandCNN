@@ -31,7 +31,7 @@ net.Summary();
 net.Fit(trainX, trainY, 10, 16);
 ```
 
-A poor but quick test. The actual code run very slowly. A futur update will introduce the Stride of NDarray for more performance.
+A poor but quick test. The actual code run very slowly. A futur update will introduce the Stride and the Storage of NDarray for more performance.
 
 ### Output
 
